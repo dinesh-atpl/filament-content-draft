@@ -1,0 +1,35 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('content_drafts', function (Blueprint $table) {
+            $table->id();
+
+            // NOTE: Change unsignedInteger → unsignedBigInteger if your users.id is bigint unsigned
+            $table->unsignedInteger('user_id');
+            $table->foreign('user_id')->references('id')->on('users')->cascadeOnDelete();
+
+            // Human-readable key identifying the form, e.g. "hcp-edit-42", "client-create"
+            $table->string('key');
+
+            // The entire $this->data payload serialised as JSON
+            $table->json('payload');
+
+            $table->timestamps();
+
+            // Ensures one draft per user per form page — makes updateOrCreate() idempotent
+            $table->unique(['user_id', 'key']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('content_drafts');
+    }
+};
