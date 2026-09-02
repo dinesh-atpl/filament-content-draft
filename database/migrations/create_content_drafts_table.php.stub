@@ -9,23 +9,37 @@ return new class extends Migration
     public function up(): void
     {
         $tableName = config('content-draft.table_name', 'content_drafts');
+        $userModel = config('content-draft.user_model', \App\Models\User::class);
 
-        Schema::create($tableName, function (Blueprint $table) {
+        Schema::create($tableName, function (Blueprint $table) use ($userModel) {
             $table->id();
 
-            // NOTE: Change unsignedInteger → unsignedBigInteger if your users.id is bigint unsigned
-            $table->unsignedInteger('user_id');
-            $table->foreign('user_id')->references('id')->on('users')->cascadeOnDelete();
+            // Compatible with MySQL, MariaDB, SQLite, and PostgreSQL
+            // Automatically adapts to User model primary key type (BigInt, UUID, ULID)
+            if (class_exists($userModel)) {
+                /** @var \Illuminate\Database\Eloquent\Model $userInstance */
+                $userInstance = new $userModel();
+                $userTable = $userInstance->getTable();
+                $userKey = $userInstance->getKeyName();
 
-            // Human-readable key identifying the form, e.g. "hcp-edit-42", "client-create"
+                if ($userInstance->getKeyType() === 'string') {
+                    $table->foreignUuid('user_id')->constrained($userTable, $userKey)->cascadeOnDelete();
+                } else {
+                    $table->foreignId('user_id')->constrained($userTable, $userKey)->cascadeOnDelete();
+                }
+            } else {
+                $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
+            }
+
+            // Human-readable key identifying the form, e.g. "users-edit-42", "cartoons-create"
             $table->string('key');
 
-            // The entire $this->data payload serialised as JSON
+            // The form payload serialized as JSON (natively supported across MySQL, MariaDB, SQLite, PostgreSQL)
             $table->json('payload');
 
             $table->timestamps();
 
-            // Ensures one draft per user per form page — makes updateOrCreate() idempotent
+            // Ensures one draft per user per form page — makes updateOrCreate() idempotent across all drivers
             $table->unique(['user_id', 'key']);
         });
     }

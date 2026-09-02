@@ -3,8 +3,10 @@
 namespace Konectar\FilamentContentDraft\Concerns;
 
 use Filament\Notifications\Notification;
+use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Facades\FilamentView;
 use Filament\View\PanelsRenderHook;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Konectar\FilamentContentDraft\ContentDraftPlugin;
 use Konectar\FilamentContentDraft\Models\ContentDraft;
@@ -14,18 +16,35 @@ trait RecoversContentDraft
 {
     /*
     |--------------------------------------------------------------------------
-    | Contract — implement this in your page
+    | Draft Key Resolution & Customization
     |--------------------------------------------------------------------------
     |
-    | Return a unique string identifying this form's draft slot.
+    | By default, the key is derived from the resource slug and operation:
+    |   Create: '{slug}-create' (e.g. 'users-create')
+    |   Edit:   '{slug}-edit-{id}' (e.g. 'users-edit-1')
     |
-    | Examples:
-    |   'client-create'
-    |   'client-edit-' . $this->record->getKey()
-    |   'hcp-edit-' . $this->record->id
+    | Override contentDraftKey() in your Page class to use a custom key.
     |
     */
-    abstract protected function contentDraftKey(): string;
+    protected function contentDraftKey(): string
+    {
+        if (method_exists($this, 'getResource')) {
+            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
+        } elseif (method_exists($this, 'getSlug')) {
+            $slug = str(static::getSlug())->replace('/', '-')->toString();
+        } else {
+            $slug = str(static::class)->classBasename()->kebab()->toString();
+        }
+
+        if ($this instanceof EditRecord || (method_exists($this, 'getRecord') && $this->getRecord() instanceof Model)) {
+            $record = method_exists($this, 'getRecord') ? $this->getRecord() : ($this->record ?? null);
+            if ($record instanceof Model && $record->getKey()) {
+                return $slug.'-edit-'.$record->getKey();
+            }
+        }
+
+        return $slug.'-create';
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -252,6 +271,22 @@ trait RecoversContentDraft
     {
         $this->clearContentDraft();
         $this->contentDraftReferenceState = $this->data ?? [];
+    }
+
+    /**
+     * Automatically clear draft after record creation.
+     */
+    protected function afterCreate(): void
+    {
+        $this->clearContentDraftAfterSave();
+    }
+
+    /**
+     * Automatically clear draft after record save/update.
+     */
+    protected function afterSave(): void
+    {
+        $this->clearContentDraftAfterSave();
     }
 
     /*

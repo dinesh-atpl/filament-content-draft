@@ -25,29 +25,50 @@ use Livewire\Attributes\On;
  *
  *   use RecoversModalContentDraft;
  *
- *   protected function createDraftKey(): string { return 'country-create'; }
- *   protected function editDraftKey(?int $recordId): string { return 'country-edit-' . $recordId; }
- *
- * Then wire the CreateAction / EditAction lifecycle callbacks with:
- *   ->afterFormFilled(fn () => $this->onModalFormFilled())    // show restore notification
- *   ->after(fn () => $this->clearModalContentDraftAfterSave()) // clear draft on save
- *
- * For edit actions, call setModalEditRecordId($record->id) inside ->using() or
- * ->before() so the trait knows which draft key to use.
+ * Override createDraftKey() or editDraftKey() only if you need custom draft keys.
  */
 trait RecoversModalContentDraft
 {
     /*
     |--------------------------------------------------------------------------
-    | Contract — implement in your Page
+    | Draft Key Resolution & Customization
     |--------------------------------------------------------------------------
+    |
+    | By default, the key is derived from the resource slug and operation:
+    |   Create: '{slug}-create' (e.g. 'cartoons-create')
+    |   Edit:   '{slug}-edit-{id}' (e.g. 'cartoons-edit-1')
+    |
+    | Override createDraftKey() or editDraftKey() in your Page class for custom keys.
+    |
     */
 
     /** Unique draft key for the create modal. */
-    abstract protected function createDraftKey(): string;
+    protected function createDraftKey(): string
+    {
+        if (method_exists($this, 'getResource')) {
+            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
+        } elseif (method_exists($this, 'getSlug')) {
+            $slug = str(static::getSlug())->replace('/', '-')->toString();
+        } else {
+            $slug = str(static::class)->classBasename()->kebab()->toString();
+        }
+
+        return $slug.'-create';
+    }
 
     /** Unique draft key for the edit modal, scoped to the record being edited. */
-    abstract protected function editDraftKey(?int $recordId): string;
+    protected function editDraftKey(int|string|null $recordId): string
+    {
+        if (method_exists($this, 'getResource')) {
+            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
+        } elseif (method_exists($this, 'getSlug')) {
+            $slug = str(static::getSlug())->replace('/', '-')->toString();
+        } else {
+            $slug = str(static::class)->classBasename()->kebab()->toString();
+        }
+
+        return $slug.'-edit-'.$recordId;
+    }
 
     /**
      * Register the wire:poll Blade partial via a Filament render hook,
@@ -105,7 +126,7 @@ trait RecoversModalContentDraft
     */
 
     /** Tracks the record ID currently open in the edit modal (null = create). */
-    public ?int $modalEditRecordId = null;
+    public int|string|null $modalEditRecordId = null;
 
     /** Tracks the timestamp when the modal draft was last saved. */
     public ?string $modalContentDraftLastSavedAt = null;
@@ -122,15 +143,47 @@ trait RecoversModalContentDraft
 
     /*
     |--------------------------------------------------------------------------
-    | Lifecycle hooks to wire into CreateAction / EditAction
+    | Lifecycle hooks for CreateAction / EditAction
     |--------------------------------------------------------------------------
     */
+
+    /**
+     * Auto-detect modal form opens for CreateAction and EditAction to offer draft restore.
+     */
+    public function mountAction(string $name, array $arguments = [], array $context = []): mixed
+    {
+        $result = parent::mountAction($name, $arguments, $context);
+
+        $action = $this->getMountedAction();
+
+        if ($action instanceof CreateAction || $action?->getName() === 'create') {
+            $this->onCreateModalFormFilled();
+        } elseif ($action instanceof EditAction || $action?->getName() === 'edit') {
+            $record = $action?->getRecord();
+            $recordId = $record?->getKey() ?? ($context['recordKey'] ?? $this->modalEditRecordId);
+            $this->onEditModalFormFilled($recordId);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Auto-clear draft when a CreateAction or EditAction completes successfully.
+     */
+    protected function afterActionCalled(Action $action): void
+    {
+        parent::afterActionCalled($action);
+
+        if ($action instanceof CreateAction || $action instanceof EditAction || in_array($action->getName(), ['create', 'edit'], true)) {
+            $this->clearModalContentDraftAfterSave($action);
+        }
+    }
 
     /**
      * Call this inside ->before() or ->using() on the EditAction so the trait
      * knows which record ID is currently being edited.
      */
-    public function setModalEditRecordId(?int $id): void
+    public function setModalEditRecordId(int|string|null $id): void
     {
         $this->modalEditRecordId = $id;
     }
@@ -149,7 +202,7 @@ trait RecoversModalContentDraft
      * Called from ->afterFormFilled() on the EditAction.
      * Shows the restore notification if a draft exists for this record.
      */
-    public function onEditModalFormFilled(int $recordId): void
+    public function onEditModalFormFilled(int|string|null $recordId): void
     {
         $this->modalEditRecordId = $recordId;
         $this->checkAndOfferDraftRestore($this->editDraftKey($recordId), 'restoreEditDraft');
@@ -157,13 +210,19 @@ trait RecoversModalContentDraft
 
     /**
      * Clear the draft and reset state after a successful save.
-     * Call this inside ->after() on CreateAction or EditAction.
      */
-    public function clearModalContentDraftAfterSave(): void
+    public function clearModalContentDraftAfterSave(?Action $action = null): void
     {
-        $key = $this->modalEditRecordId === null
-            ? $this->createDraftKey()
-            : $this->editDraftKey($this->modalEditRecordId);
+        if ($action instanceof EditAction || $action?->getName() === 'edit') {
+            $recordId = $action->getRecord()?->getKey() ?? $this->modalEditRecordId;
+            $key = $this->editDraftKey($recordId);
+        } elseif ($action instanceof CreateAction || $action?->getName() === 'create') {
+            $key = $this->createDraftKey();
+        } elseif ($this->modalEditRecordId !== null) {
+            $key = $this->editDraftKey($this->modalEditRecordId);
+        } else {
+            $key = $this->createDraftKey();
+        }
 
         $this->clearModalContentDraft($key);
         $this->modalEditRecordId = null;
@@ -265,7 +324,7 @@ trait RecoversModalContentDraft
         $recordId = $this->modalEditRecordId;
         if ($recordId === null) {
             $mountedAction = $this->getActiveMountedAction();
-            $recordId = isset($mountedAction['context']['recordKey']) ? (int) $mountedAction['context']['recordKey'] : null;
+            $recordId = $mountedAction['context']['recordKey'] ?? null;
         }
         $this->restoreDraftIntoModal($this->editDraftKey($recordId));
     }
@@ -416,7 +475,7 @@ trait RecoversModalContentDraft
         if ($actionName === 'edit') {
             $recordId = $this->modalEditRecordId ?? ($mountedAction['context']['recordKey'] ?? null);
 
-            return $this->editDraftKey($recordId ? (int) $recordId : null);
+            return $this->editDraftKey($recordId);
         }
 
         return null;
