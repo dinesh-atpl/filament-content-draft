@@ -8,7 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('content_drafts', function (Blueprint $table) {
+        $tableName = config('content-draft.table_name', 'content_drafts');
+
+        Schema::create($tableName, function (Blueprint $table) {
             $table->id();
 
             // NOTE: Change unsignedInteger → unsignedBigInteger if your users.id is bigint unsigned
@@ -30,6 +32,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('content_drafts');
+        $tableName = config('content-draft.table_name', 'content_drafts');
+
+        Schema::dropIfExists($tableName);
     }
 };

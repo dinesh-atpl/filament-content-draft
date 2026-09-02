@@ -2,9 +2,15 @@
 
 namespace Konectar\FilamentContentDraft\Concerns;
 
-use Filament\Actions\Action as NotificationAction;
+use Filament\Actions\Action;
+use Filament\Actions\CreateAction;
+use Filament\Actions\EditAction;
+use Filament\Actions\View\ActionsRenderHook;
 use Filament\Notifications\Notification;
+use Filament\Support\Facades\FilamentView;
+use Filament\View\PanelsRenderHook;
 use Illuminate\Support\Facades\Auth;
+use Konectar\FilamentContentDraft\ContentDraftPlugin;
 use Konectar\FilamentContentDraft\Models\ContentDraft;
 use Livewire\Attributes\On;
 
@@ -43,6 +49,55 @@ trait RecoversModalContentDraft
     /** Unique draft key for the edit modal, scoped to the record being edited. */
     abstract protected function editDraftKey(?int $recordId): string;
 
+    /**
+     * Register the wire:poll Blade partial via a Filament render hook,
+     * scoped to only this page class.
+     * Livewire calls this automatically because of the naming convention
+     * boot{TraitName}().
+     */
+    public function bootRecoversModalContentDraft(): void
+    {
+        try {
+            $hook = ContentDraftPlugin::get()->getRenderHook();
+        } catch (\Throwable $e) {
+            $hook = config(
+                'content-draft.render_hook',
+                PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE
+            );
+        }
+
+        // Register under page content / widgets
+        FilamentView::registerRenderHook(
+            $hook,
+            fn () => view('content-draft::content-draft-poller'),
+            scopes: static::class,
+        );
+
+        // Register directly under the modal form schema inside action modals
+        FilamentView::registerRenderHook(
+            ActionsRenderHook::MODAL_SCHEMA_AFTER,
+            fn (array $data = []) => view('content-draft::content-draft-poller', $data),
+            scopes: [
+                static::class,
+                Action::class,
+                CreateAction::class,
+                EditAction::class,
+            ],
+        );
+
+        // Register directly above the modal form schema for the restore banner
+        FilamentView::registerRenderHook(
+            ActionsRenderHook::MODAL_SCHEMA_BEFORE,
+            fn (array $data = []) => view('content-draft::content-draft-banner', $data),
+            scopes: [
+                static::class,
+                Action::class,
+                CreateAction::class,
+                EditAction::class,
+            ],
+        );
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Internal State
@@ -51,6 +106,9 @@ trait RecoversModalContentDraft
 
     /** Tracks the record ID currently open in the edit modal (null = create). */
     public ?int $modalEditRecordId = null;
+
+    /** Tracks the timestamp when the modal draft was last saved. */
+    public ?string $modalContentDraftLastSavedAt = null;
 
     /**
      * When true, a draft was found on modal open and the user has NOT yet
@@ -119,6 +177,22 @@ trait RecoversModalContentDraft
     */
 
     /**
+     * Helper to retrieve active mounted action array.
+     */
+    protected function getActiveMountedAction(): ?array
+    {
+        if (! empty($this->mountedActions) && is_array($this->mountedActions[0] ?? null)) {
+            return $this->mountedActions[0];
+        }
+
+        if (property_exists($this, 'mountedTableActions') && ! empty($this->mountedTableActions) && is_array($this->mountedTableActions[0] ?? null)) {
+            return $this->mountedTableActions[0];
+        }
+
+        return null;
+    }
+
+    /**
      * Serialises the mounted modal form data as the draft payload.
      * Called automatically every N seconds by wire:poll (from the poller partial).
      * Only runs when a modal with a form is actually open.
@@ -131,7 +205,9 @@ trait RecoversModalContentDraft
     public function saveDraft(): void
     {
         // ── Guard 1: No modal open ────────────────────────────────────────────
-        if (empty($this->mountedActions)) {
+        $mountedAction = $this->getActiveMountedAction();
+
+        if ($mountedAction === null) {
             return;
         }
 
@@ -139,10 +215,12 @@ trait RecoversModalContentDraft
         // A draft was found when the modal opened. Do NOT touch the saved draft
         // until the user explicitly chooses "Restore" or "Discard".
         if ($this->modalDraftRestorePending) {
+            $this->lockModalActionSchemaIfPending();
+
             return;
         }
 
-        $data = $this->mountedActions[0]['data'] ?? [];
+        $data = $mountedAction['data'] ?? [];
 
         // ── Guard 3: Form is still in its initial empty/null state ────────────
         // Uses the deep emptiness check (same as the standard trait) rather than
@@ -162,7 +240,9 @@ trait RecoversModalContentDraft
             ['payload' => $data],
         );
 
-        $this->dispatch('content-draft-saved');
+        $this->modalContentDraftLastSavedAt = now()->format('h:i:s A');
+
+        $this->dispatch('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
     }
 
     /*
@@ -182,13 +262,19 @@ trait RecoversModalContentDraft
     public function restoreEditDraft(): void
     {
         $this->modalDraftRestorePending = false;
-        $this->restoreDraftIntoModal($this->editDraftKey($this->modalEditRecordId));
+        $recordId = $this->modalEditRecordId;
+        if ($recordId === null) {
+            $mountedAction = $this->getActiveMountedAction();
+            $recordId = isset($mountedAction['context']['recordKey']) ? (int) $mountedAction['context']['recordKey'] : null;
+        }
+        $this->restoreDraftIntoModal($this->editDraftKey($recordId));
     }
 
     #[On('discardModalContentDraft')]
     public function discardModalContentDraft(): void
     {
         $this->modalDraftRestorePending = false;
+        $this->modalContentDraftLastSavedAt = null;
 
         $key = $this->resolveActiveDraftKey();
 
@@ -216,28 +302,46 @@ trait RecoversModalContentDraft
             ->first();
 
         if ($draft) {
-            // Freeze auto-save until the user resolves the prompt.
+            $this->modalContentDraftLastSavedAt = null;
+
+            // Freeze auto-save until the user resolves the prompt via the inline banner.
             $this->modalDraftRestorePending = true;
 
-            Notification::make('content-draft-found-' . $key)
-                ->warning()
-                ->title('Unsaved draft found')
-                ->body('You have an unsaved draft from a previous session. Would you like to restore it?')
-                ->persistent()
-                ->actions([
-                    NotificationAction::make('restore')
-                        ->label('Restore Draft')
-                        ->button()
-                        ->color('warning')
-                        ->dispatch($restoreEvent)
-                        ->close(),
-                    NotificationAction::make('dismiss')
-                        ->label('Discard')
-                        ->color('gray')
-                        ->dispatch('discardModalContentDraft')
-                        ->close(),
-                ])
-                ->send();
+            $this->lockModalActionSchemaIfPending();
+        } else {
+            $this->modalContentDraftLastSavedAt = null;
+        }
+    }
+
+    public function renderingRecoversModalContentDraft(): void
+    {
+        if ($this->modalDraftRestorePending) {
+            $this->lockModalActionSchemaIfPending();
+        }
+    }
+
+    protected function lockModalActionSchemaIfPending(): void
+    {
+        if (property_exists($this, 'table') && ! isset($this->table)) {
+            return;
+        }
+
+        try {
+            $action = $this->getMountedAction();
+            if ($action) {
+                $action->disabledSchema(fn ($livewire) => (bool) ($livewire->modalDraftRestorePending ?? false));
+            }
+        } catch (\Throwable) {
+        }
+
+        if (method_exists($this, 'getSchema')) {
+            for ($i = 0; $i < 5; $i++) {
+                try {
+                    $schema = $this->getSchema("mountedActionSchema{$i}");
+                    $schema?->disabled(fn ($livewire) => (bool) ($livewire->modalDraftRestorePending ?? false));
+                } catch (\Throwable) {
+                }
+            }
         }
     }
 
@@ -248,14 +352,36 @@ trait RecoversModalContentDraft
             ->where('key', $key)
             ->first();
 
-        if ($draft && isset($this->mountedActions[0])) {
-            $this->mountedActions[0]['data'] = $draft->payload;
-
-            Notification::make()
-                ->success()
-                ->title('Draft restored successfully')
-                ->send();
+        if (! $draft) {
+            return;
         }
+
+        $this->modalContentDraftLastSavedAt = $draft->updated_at?->format('h:i:s A');
+
+        if (isset($this->mountedActions[0]['data'])) {
+            $this->mountedActions[0]['data'] = $draft->payload;
+        } elseif (property_exists($this, 'mountedTableActions') && isset($this->mountedTableActions[0]['data'])) {
+            $this->mountedTableActions[0]['data'] = $draft->payload;
+        }
+
+        if (method_exists($this, 'getMountedActionSchema')) {
+            try {
+                $this->getMountedActionSchema()?->fill($draft->payload);
+            } catch (\Throwable) {
+            }
+        } elseif (method_exists($this, 'getMountedActionForm')) {
+            try {
+                $this->getMountedActionForm()?->fill($draft->payload);
+            } catch (\Throwable) {
+            }
+        }
+
+        Notification::make()
+            ->success()
+            ->title('Draft restored successfully')
+            ->send();
+
+        $this->dispatch('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
     }
 
     protected function clearModalContentDraft(string $key): void
@@ -264,11 +390,19 @@ trait RecoversModalContentDraft
             ->where('user_id', Auth::id())
             ->where('key', $key)
             ->delete();
+
+        $this->modalContentDraftLastSavedAt = null;
     }
 
     protected function resolveActiveDraftKey(): ?string
     {
-        $actionName = $this->mountedActions[0]['name'] ?? null;
+        $mountedAction = $this->getActiveMountedAction();
+
+        if ($mountedAction === null) {
+            return null;
+        }
+
+        $actionName = $mountedAction['name'] ?? null;
 
         if ($actionName === null) {
             return null;
@@ -280,7 +414,9 @@ trait RecoversModalContentDraft
         }
 
         if ($actionName === 'edit') {
-            return $this->editDraftKey($this->modalEditRecordId);
+            $recordId = $this->modalEditRecordId ?? ($mountedAction['context']['recordKey'] ?? null);
+
+            return $this->editDraftKey($recordId ? (int) $recordId : null);
         }
 
         return null;

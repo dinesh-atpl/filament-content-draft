@@ -1,6 +1,16 @@
 <?php
 
+use Filament\View\PanelsRenderHook;
+
 return [
+    /*
+    |--------------------------------------------------------------------------
+    | Table Name
+    |--------------------------------------------------------------------------
+    | The database table name used to store content drafts.
+    */
+    'table_name' => env('CONTENT_DRAFT_TABLE_NAME', 'content_drafts'),
+
     /*
     |--------------------------------------------------------------------------
     | Poll Interval
@@ -31,7 +41,22 @@ return [
     | Render Hook
     |--------------------------------------------------------------------------
     | Which Filament render hook to attach the poller to.
-    | Default: after the page footer widgets (unobtrusive).
+    | Default: immediately after form / before footer widgets.
     */
-    'render_hook' => \Filament\View\PanelsRenderHook::PAGE_FOOTER_WIDGETS_AFTER,
+    'render_hook' => PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Indicator Position
+    |--------------------------------------------------------------------------
+    | Where the "Draft saved at HH:MM:SS" indicator badge should be displayed.
+    |
+    | Supported options:
+    |   - 'under-form' (default, inline directly beneath the form fields)
+    |   - 'bottom-right' (floating fixed pill at bottom-right of screen)
+    |   - 'bottom-left' (floating fixed pill at bottom-left of screen)
+    |   - 'top-right' (floating fixed pill at top-right of screen)
+    |   - 'top-left' (floating fixed pill at top-left of screen)
+    */
+    'position' => env('CONTENT_DRAFT_POSITION', 'under-form'),
 ];

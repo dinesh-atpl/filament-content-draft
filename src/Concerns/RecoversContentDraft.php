@@ -2,7 +2,6 @@
 
 namespace Konectar\FilamentContentDraft\Concerns;
 
-use Filament\Actions\Action as NotificationAction;
 use Filament\Notifications\Notification;
 use Filament\Support\Facades\FilamentView;
 use Filament\View\PanelsRenderHook;
@@ -34,6 +33,8 @@ trait RecoversContentDraft
     |--------------------------------------------------------------------------
     */
 
+    public ?string $contentDraftLastSavedAt = null;
+
     /**
      * Snapshot initial form state, then check for an existing draft.
      * Livewire calls this automatically because of the naming convention
@@ -51,28 +52,29 @@ trait RecoversContentDraft
             ->first();
 
         if ($draft) {
-            // Freeze auto-save until the user resolves the prompt.
-            $this->contentDraftRestorePending = true;
+            $this->contentDraftLastSavedAt = null;
 
-            Notification::make('content-draft-found')
-                ->warning()
-                ->title('Unsaved draft found')
-                ->body('You have an unsaved draft from a previous session. Would you like to restore it?')
-                ->persistent()
-                ->actions([
-                    NotificationAction::make('restore')
-                        ->label('Restore Draft')
-                        ->button()
-                        ->color('warning')
-                        ->dispatch('restoreContentDraft')
-                        ->close(),
-                    NotificationAction::make('dismiss')
-                        ->label('Discard')
-                        ->color('gray')
-                        ->dispatch('discardContentDraft')
-                        ->close(),
-                ])
-                ->send();
+            // Freeze auto-save until the user resolves the prompt via the inline banner.
+            $this->contentDraftRestorePending = true;
+        }
+
+        $this->lockFormIfDraftRestorePending();
+    }
+
+    public function hydrateRecoversContentDraft(): void
+    {
+        $this->lockFormIfDraftRestorePending();
+    }
+
+    public function renderingRecoversContentDraft(): void
+    {
+        $this->lockFormIfDraftRestorePending();
+    }
+
+    protected function lockFormIfDraftRestorePending(): void
+    {
+        if (method_exists($this, 'getSchema') && $this->getSchema('form')) {
+            $this->getSchema('form')->disabled(fn ($livewire) => (bool) ($livewire->contentDraftRestorePending ?? false));
         }
     }
 
@@ -89,13 +91,19 @@ trait RecoversContentDraft
         } catch (\Throwable $e) {
             $hook = config(
                 'content-draft.render_hook',
-                PanelsRenderHook::PAGE_FOOTER_WIDGETS_AFTER
+                PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE
             );
         }
 
         FilamentView::registerRenderHook(
             $hook,
-            fn () => view('content-draft::content-draft-poller'),
+            fn (array $data = []) => view('content-draft::content-draft-poller', $data),
+            scopes: static::class,
+        );
+
+        FilamentView::registerRenderHook(
+            PanelsRenderHook::PAGE_HEADER_WIDGETS_BEFORE,
+            fn (array $data = []) => view('content-draft::content-draft-banner', $data),
             scopes: static::class,
         );
     }
@@ -171,8 +179,10 @@ trait RecoversContentDraft
             ['payload' => $data],
         );
 
+        $this->contentDraftLastSavedAt = now()->format('h:i:s A');
+
         // Broadcast to Alpine.js so the UI shows "Draft saved at HH:MM:SS"
-        $this->dispatch('content-draft-saved');
+        $this->dispatch('content-draft-saved', time: $this->contentDraftLastSavedAt);
     }
 
     /*
@@ -200,7 +210,9 @@ trait RecoversContentDraft
             ->first();
 
         if ($draft) {
+            $this->contentDraftLastSavedAt = $draft->updated_at?->format('h:i:s A');
             $this->form->fill($draft->payload);
+            $this->dispatch('content-draft-saved', time: $this->contentDraftLastSavedAt);
 
             Notification::make()
                 ->success()
@@ -217,6 +229,7 @@ trait RecoversContentDraft
     {
         // Unfreeze auto-save now that the user has made a decision.
         $this->contentDraftRestorePending = false;
+        $this->contentDraftLastSavedAt = null;
         $this->clearContentDraft();
     }
 
@@ -256,6 +269,8 @@ trait RecoversContentDraft
             ->where('user_id', Auth::id())
             ->where('key', $this->contentDraftKey())
             ->delete();
+
+        $this->contentDraftLastSavedAt = null;
     }
 
     /**
