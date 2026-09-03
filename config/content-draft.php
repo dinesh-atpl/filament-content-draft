@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\User;
 use Filament\View\PanelsRenderHook;
 
 return [
@@ -34,7 +35,7 @@ return [
     | The fully-qualified class name of your User model.
     | Used for the foreign key in the migration and the relationship.
     */
-    'user_model' => env('CONTENT_DRAFT_USER_MODEL', 'App\\Models\\User'),
+    'user_model' => User::class,
 
     /*
     |--------------------------------------------------------------------------
@@ -59,4 +60,29 @@ return [
     |   - 'top-left' (floating fixed pill at top-left of screen)
     */
     'position' => env('CONTENT_DRAFT_POSITION', 'under-form'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Lock Form While Draft Restore Pending
+    |--------------------------------------------------------------------------
+    | Whether the form should be disabled/locked until the user clicks
+    | "Restore" or "Discard" from the unsaved draft banner.
+    | Defaults to false (form remains editable).
+    */
+    'lock_form_while_draft_pending' => env('CONTENT_DRAFT_LOCK_FORM', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Excluded / Sensitive Fields
+    |--------------------------------------------------------------------------
+    | Form fields that should never be stored in content drafts (e.g. passwords).
+    | Matching is case-insensitive and strips nested keys recursively.
+    */
+    'except_fields' => [
+        'password',
+        'password_confirmation',
+        'current_password',
+        'new_password',
+        'new_password_confirmation',
+    ],
 ];

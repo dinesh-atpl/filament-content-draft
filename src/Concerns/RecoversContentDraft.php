@@ -2,12 +2,17 @@
 
 namespace Konectar\FilamentContentDraft\Concerns;
 
+use Filament\Actions\Action;
+use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
+use Filament\Resources\Events\RecordSaved;
+use Filament\Resources\Pages\CreateRecord;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Facades\FilamentView;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Event;
 use Konectar\FilamentContentDraft\ContentDraftPlugin;
 use Konectar\FilamentContentDraft\Models\ContentDraft;
 use Livewire\Attributes\On;
@@ -28,19 +33,57 @@ trait RecoversContentDraft
     */
     protected function contentDraftKey(): string
     {
-        if (method_exists($this, 'getResource')) {
-            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
-        } elseif (method_exists($this, 'getSlug')) {
-            $slug = str(static::getSlug())->replace('/', '-')->toString();
-        } else {
-            $slug = str(static::class)->classBasename()->kebab()->toString();
+        $record = null;
+        if (method_exists($this, 'getRecord') && $this->getRecord() instanceof Model) {
+            $record = $this->getRecord();
+        } elseif (isset($this->record) && $this->record instanceof Model) {
+            $record = $this->record;
         }
 
-        if ($this instanceof EditRecord || (method_exists($this, 'getRecord') && $this->getRecord() instanceof Model)) {
-            $record = method_exists($this, 'getRecord') ? $this->getRecord() : ($this->record ?? null);
-            if ($record instanceof Model && $record->getKey()) {
-                return $slug.'-edit-'.$record->getKey();
+        $slug = null;
+        try {
+            if (method_exists($this, 'getResource') && ! empty(static::getResource())) {
+                $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
             }
+        } catch (\Throwable $e) {
+            $slug = null;
+        }
+
+        if (empty($slug)) {
+            if (method_exists($this, 'getSlug')) {
+                $rawSlug = static::getSlug();
+
+                if ($record instanceof Model && $record->getKey()) {
+                    $rawSlug = preg_replace('/\{[^}]+\}/', (string) $record->getKey(), $rawSlug);
+                } else {
+                    $rawSlug = preg_replace('/\{[^}]+\}/', '', $rawSlug);
+                }
+
+                $slug = str($rawSlug)->replace('/', '-')->trim('-')->toString();
+            } else {
+                $slug = str(static::class)->classBasename()->kebab()->toString();
+            }
+        }
+
+        // Create Record pages are dedicated creation pages; they should always use the create draft key
+        if ($this instanceof CreateRecord || str_ends_with(str(static::class)->classBasename()->toString(), 'CreateRecord') || str_starts_with(str(static::class)->classBasename()->toString(), 'Create')) {
+            if (str_ends_with($slug, '-create')) {
+                return $slug;
+            }
+
+            return $slug.'-create';
+        }
+
+        if ($record instanceof Model && $record->getKey()) {
+            if (str_contains($slug, (string) $record->getKey())) {
+                return $slug;
+            }
+
+            return $slug.'-edit-'.$record->getKey();
+        }
+
+        if (str_ends_with($slug, '-create')) {
+            return $slug;
         }
 
         return $slug.'-create';
@@ -54,6 +97,8 @@ trait RecoversContentDraft
 
     public ?string $contentDraftLastSavedAt = null;
 
+    public ?string $activeContentDraftKey = null;
+
     /**
      * Snapshot initial form state, then check for an existing draft.
      * Livewire calls this automatically because of the naming convention
@@ -61,12 +106,15 @@ trait RecoversContentDraft
      */
     public function mountRecoversContentDraft(): void
     {
-        // Snapshot the form state at load time.
+        // Snapshot the form state at load time (excluding sensitive fields like passwords).
         // On edit pages this is the DB-loaded data; on create pages it's empty/defaults.
-        $this->contentDraftReferenceState = $this->data ?? [];
+        $this->contentDraftReferenceState = $this->filterContentDraftPayload($this->data ?? []);
+        $this->activeContentDraftKey = $this->contentDraftKey();
+
+        $userId = Filament::auth()->id() ?? Auth::id();
 
         $draft = ContentDraft::query()
-            ->where('user_id', Auth::id())
+            ->where('user_id', $userId)
             ->where('key', $this->contentDraftKey())
             ->first();
 
@@ -90,8 +138,21 @@ trait RecoversContentDraft
         $this->lockFormIfDraftRestorePending();
     }
 
+    protected function shouldLockFormWhileDraftPending(): bool
+    {
+        try {
+            return ContentDraftPlugin::get()->shouldLockFormWhileDraftPending();
+        } catch (\Throwable $e) {
+            return (bool) config('content-draft.lock_form_while_draft_pending', false);
+        }
+    }
+
     protected function lockFormIfDraftRestorePending(): void
     {
+        if (! $this->shouldLockFormWhileDraftPending()) {
+            return;
+        }
+
         if (method_exists($this, 'getSchema') && $this->getSchema('form')) {
             $this->getSchema('form')->disabled(fn ($livewire) => (bool) ($livewire->contentDraftRestorePending ?? false));
         }
@@ -125,6 +186,24 @@ trait RecoversContentDraft
             fn (array $data = []) => view('content-draft::content-draft-banner', $data),
             scopes: static::class,
         );
+
+        // Auto-clear draft when submit actions are executed on the page
+        Action::configureUsing(function (Action $action): void {
+            if (in_array($action->getName(), ['create', 'createAnother', 'save'], true)) {
+                $action->after(function ($livewire) {
+                    if ($livewire && method_exists($livewire, 'clearContentDraftAfterSave')) {
+                        $livewire->clearContentDraftAfterSave();
+                    }
+                });
+            }
+        });
+
+        Event::listen(RecordSaved::class, function ($event) {
+            $page = is_array($event) ? ($event['page'] ?? null) : ($event->page ?? null);
+            if ($page === $this) {
+                $this->clearContentDraftAfterSave();
+            }
+        });
     }
 
     /*
@@ -165,7 +244,7 @@ trait RecoversContentDraft
      */
     public function saveDraft(): void
     {
-        $data = $this->data ?? [];
+        $data = $this->filterContentDraftPayload($this->data ?? []);
 
         // Skip saving if the form is completely empty (e.g. user just landed on page)
         if ($this->isContentDraftEmpty($data)) {
@@ -191,17 +270,29 @@ trait RecoversContentDraft
             return;
         }
 
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         // Overwrite the same row on every poll — the unique index guarantees
         // at most one draft per user per key.
         ContentDraft::query()->updateOrCreate(
-            ['user_id' => Auth::id(), 'key' => $this->contentDraftKey()],
+            ['user_id' => $userId, 'key' => $this->contentDraftKey()],
             ['payload' => $data],
         );
 
         $this->contentDraftLastSavedAt = now()->format('h:i:s A');
 
         // Broadcast to Alpine.js so the UI shows "Draft saved at HH:MM:SS"
-        $this->dispatch('content-draft-saved', time: $this->contentDraftLastSavedAt);
+        $this->dispatchDraftEvent('content-draft-saved', time: $this->contentDraftLastSavedAt);
+    }
+
+    /**
+     * Safely dispatch Livewire browser events if dispatch method is available.
+     */
+    protected function dispatchDraftEvent(string $event, ...$params): void
+    {
+        if (method_exists($this, 'dispatch')) {
+            $this->dispatch($event, ...$params);
+        }
     }
 
     /*
@@ -223,15 +314,17 @@ trait RecoversContentDraft
         // Unfreeze auto-save now that the user has made a decision.
         $this->contentDraftRestorePending = false;
 
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         $draft = ContentDraft::query()
-            ->where('user_id', Auth::id())
+            ->where('user_id', $userId)
             ->where('key', $this->contentDraftKey())
             ->first();
 
         if ($draft) {
             $this->contentDraftLastSavedAt = $draft->updated_at?->format('h:i:s A');
             $this->form->fill($draft->payload);
-            $this->dispatch('content-draft-saved', time: $this->contentDraftLastSavedAt);
+            $this->dispatchDraftEvent('content-draft-saved', time: $this->contentDraftLastSavedAt);
 
             Notification::make()
                 ->success()
@@ -270,7 +363,9 @@ trait RecoversContentDraft
     public function clearContentDraftAfterSave(): void
     {
         $this->clearContentDraft();
-        $this->contentDraftReferenceState = $this->data ?? [];
+        $this->contentDraftRestorePending = false;
+        $this->contentDraftReferenceState = $this->filterContentDraftPayload($this->data ?? []);
+        $this->dispatchDraftEvent('content-draft-cleared');
     }
 
     /**
@@ -296,16 +391,66 @@ trait RecoversContentDraft
     */
 
     /**
+     * Filter out sensitive fields (like password) recursively from the payload.
+     */
+    protected function filterContentDraftPayload(array $data): array
+    {
+        $excludedFields = array_map('strtolower', (array) config('content-draft.except_fields', [
+            'password',
+            'password_confirmation',
+            'current_password',
+            'new_password',
+            'new_password_confirmation',
+        ]));
+
+        if (method_exists($this, 'contentDraftExcept')) {
+            $excludedFields = array_merge($excludedFields, array_map('strtolower', (array) $this->contentDraftExcept()));
+        }
+
+        return $this->stripExcludedFieldsRecursively($data, $excludedFields);
+    }
+
+    /**
+     * Recursively strip excluded keys from data array.
+     */
+    protected function stripExcludedFieldsRecursively(array $data, array $excludedFields): array
+    {
+        foreach ($data as $key => $value) {
+            $normalizedKey = strtolower((string) $key);
+
+            if (in_array($normalizedKey, $excludedFields, true)) {
+                unset($data[$key]);
+                continue;
+            }
+
+            if (is_array($value)) {
+                $data[$key] = $this->stripExcludedFieldsRecursively($value, $excludedFields);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
      * Delete the draft row for this user + key.
      */
     protected function clearContentDraft(): void
     {
+        $keys = array_unique(array_filter([
+            $this->activeContentDraftKey ?? null,
+            $this->contentDraftKey(),
+        ]));
+
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         ContentDraft::query()
-            ->where('user_id', Auth::id())
-            ->where('key', $this->contentDraftKey())
+            ->where('user_id', $userId)
+            ->whereIn('key', $keys)
             ->delete();
 
         $this->contentDraftLastSavedAt = null;
+        $this->contentDraftRestorePending = false;
+        $this->dispatchDraftEvent('content-draft-cleared');
     }
 
     /**

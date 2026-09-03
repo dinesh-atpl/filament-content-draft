@@ -32,24 +32,32 @@
         : (isset($action) && method_exists($action, 'getLivewire') ? $action->getLivewire() : null);
 
     $isModal = $livewire && property_exists($livewire, 'modalDraftRestorePending');
+    $isModalOpen = $isModal ? ($livewire->getActiveMountedAction() !== null) : true;
     $isPending = (bool) ($livewire ? ($isModal ? $livewire->modalDraftRestorePending : ($livewire->contentDraftRestorePending ?? false)) : false);
 
-    $serverLastSaved = $isPending ? null : ($livewire->contentDraftLastSavedAt ?? $livewire->modalContentDraftLastSavedAt ?? null);
+    $serverLastSaved = ($isPending || ($isModal && ! $isModalOpen)) ? null : ($livewire->contentDraftLastSavedAt ?? $livewire->modalContentDraftLastSavedAt ?? null);
 @endphp
 
 <div
     wire:poll.{{ $interval }}s="saveDraft"
     x-data="{
         lastSaved: @js($serverLastSaved),
-        show: {{ $serverLastSaved ? 'true' : 'false' }},
+        show: {{ ($serverLastSaved && (! $isModal || $isModalOpen)) ? 'true' : 'false' }},
         timeout: null,
         isFloating: {{ $isFloating ? 'true' : 'false' }},
+        isModal: {{ $isModal ? 'true' : 'false' }},
+        isModalOpen: {{ $isModalOpen ? 'true' : 'false' }},
         init() {
-            if (this.lastSaved && ! @js($isPending)) {
+            if (this.lastSaved && ! @js($isPending) && (! this.isModal || this.isModalOpen)) {
                 this.show = true;
             }
         },
         onSaved(detail) {
+            if (this.isModal && ! this.isModalOpen) {
+                this.show = false;
+                return;
+            }
+
             let time = null;
             if (typeof detail === 'string') {
                 time = detail;
@@ -67,9 +75,17 @@
                     this.show = false;
                 }, 4000);
             }
+        },
+        onCleared() {
+            this.lastSaved = null;
+            this.show = false;
+            if (this.timeout) {
+                clearTimeout(this.timeout);
+            }
         }
     }"
     x-on:content-draft-saved.window="onSaved($event.detail)"
+    x-on:content-draft-cleared.window="onCleared()"
     @if (! $isFloating)
         class="w-full mt-2 mb-1"
     @endif

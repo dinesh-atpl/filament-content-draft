@@ -5,11 +5,14 @@ namespace Konectar\FilamentContentDraft\Concerns;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Actions\EditAction;
+use Filament\Actions\Events\ActionCalled;
 use Filament\Actions\View\ActionsRenderHook;
+use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
 use Filament\Support\Facades\FilamentView;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Event;
 use Konectar\FilamentContentDraft\ContentDraftPlugin;
 use Konectar\FilamentContentDraft\Models\ContentDraft;
 use Livewire\Attributes\On;
@@ -45,12 +48,26 @@ trait RecoversModalContentDraft
     /** Unique draft key for the create modal. */
     protected function createDraftKey(): string
     {
-        if (method_exists($this, 'getResource')) {
-            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
-        } elseif (method_exists($this, 'getSlug')) {
-            $slug = str(static::getSlug())->replace('/', '-')->toString();
-        } else {
-            $slug = str(static::class)->classBasename()->kebab()->toString();
+        $slug = null;
+        try {
+            if (method_exists($this, 'getResource') && ! empty(static::getResource())) {
+                $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
+            }
+        } catch (\Throwable $e) {
+            $slug = null;
+        }
+
+        if (empty($slug)) {
+            if (method_exists($this, 'getSlug')) {
+                $rawSlug = preg_replace('/\{[^}]+\}/', '', static::getSlug());
+                $slug = str($rawSlug)->replace('/', '-')->trim('-')->toString();
+            } else {
+                $slug = str(static::class)->classBasename()->kebab()->toString();
+            }
+        }
+
+        if (str_ends_with($slug, '-create')) {
+            return $slug;
         }
 
         return $slug.'-create';
@@ -59,15 +76,38 @@ trait RecoversModalContentDraft
     /** Unique draft key for the edit modal, scoped to the record being edited. */
     protected function editDraftKey(int|string|null $recordId): string
     {
-        if (method_exists($this, 'getResource')) {
-            $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
-        } elseif (method_exists($this, 'getSlug')) {
-            $slug = str(static::getSlug())->replace('/', '-')->toString();
-        } else {
-            $slug = str(static::class)->classBasename()->kebab()->toString();
+        $slug = null;
+        try {
+            if (method_exists($this, 'getResource') && ! empty(static::getResource())) {
+                $slug = str(static::getResource()::getSlug())->replace('/', '-')->toString();
+            }
+        } catch (\Throwable $e) {
+            $slug = null;
         }
 
-        return $slug.'-edit-'.$recordId;
+        if (empty($slug)) {
+            if (method_exists($this, 'getSlug')) {
+                $rawSlug = static::getSlug();
+                if ($recordId !== null && $recordId !== '') {
+                    $rawSlug = preg_replace('/\{[^}]+\}/', (string) $recordId, $rawSlug);
+                } else {
+                    $rawSlug = preg_replace('/\{[^}]+\}/', '', $rawSlug);
+                }
+                $slug = str($rawSlug)->replace('/', '-')->trim('-')->toString();
+            } else {
+                $slug = str(static::class)->classBasename()->kebab()->toString();
+            }
+        }
+
+        if ($recordId !== null && $recordId !== '') {
+            if (str_contains($slug, (string) $recordId)) {
+                return $slug;
+            }
+
+            return $slug.'-edit-'.$recordId;
+        }
+
+        return $slug.'-edit';
     }
 
     /**
@@ -78,22 +118,6 @@ trait RecoversModalContentDraft
      */
     public function bootRecoversModalContentDraft(): void
     {
-        try {
-            $hook = ContentDraftPlugin::get()->getRenderHook();
-        } catch (\Throwable $e) {
-            $hook = config(
-                'content-draft.render_hook',
-                PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE
-            );
-        }
-
-        // Register under page content / widgets
-        FilamentView::registerRenderHook(
-            $hook,
-            fn () => view('content-draft::content-draft-poller'),
-            scopes: static::class,
-        );
-
         // Register directly under the modal form schema inside action modals
         FilamentView::registerRenderHook(
             ActionsRenderHook::MODAL_SCHEMA_AFTER,
@@ -117,11 +141,40 @@ trait RecoversModalContentDraft
                 EditAction::class,
             ],
         );
+
+        // Auto-clear draft when a CreateAction or EditAction completes successfully
+        Action::configureUsing(function (Action $action): void {
+            if ($action instanceof CreateAction || $action instanceof EditAction || in_array($action->getName(), ['create', 'edit'], true)) {
+                $action->after(function ($livewire) use ($action) {
+                    if ($livewire && method_exists($livewire, 'clearModalContentDraftAfterSave')) {
+                        $livewire->clearModalContentDraftAfterSave($action);
+                    }
+                });
+            }
+        });
+
+        // Listen for ActionCalled event — guarantees cleanup even if ->after() was overwritten on the action
+        Event::listen(ActionCalled::class, function ($event): void {
+            $action = $event instanceof ActionCalled ? $event->getAction() : $event;
+
+            if (! $action instanceof Action) {
+                return;
+            }
+
+            $livewire = $action->getLivewire();
+
+            if ($livewire && method_exists($livewire, 'clearModalContentDraftAfterSave')) {
+                if ($action instanceof CreateAction || $action instanceof EditAction || in_array($action->getName(), ['create', 'edit'], true) || ($livewire->modalDraftActiveKey ?? null) !== null) {
+                    $livewire->clearModalContentDraftAfterSave($action);
+                }
+            }
+        });
     }
 
     /*
     |--------------------------------------------------------------------------
     | Internal State
+    |--------------------------------------------------------------------------
     |--------------------------------------------------------------------------
     */
 
@@ -141,43 +194,17 @@ trait RecoversModalContentDraft
      */
     public bool $modalDraftRestorePending = false;
 
+    /** Tracks the active modal draft key for the currently open modal session. */
+    public ?string $modalDraftActiveKey = null;
+
+    /** Tracks whether the user has already made a decision (Restore or Discard) for the active modal session. */
+    public bool $modalDraftRestoreDecisionMade = false;
+
     /*
     |--------------------------------------------------------------------------
-    | Lifecycle hooks for CreateAction / EditAction
+    | Helper hooks for CreateAction / EditAction
     |--------------------------------------------------------------------------
     */
-
-    /**
-     * Auto-detect modal form opens for CreateAction and EditAction to offer draft restore.
-     */
-    public function mountAction(string $name, array $arguments = [], array $context = []): mixed
-    {
-        $result = parent::mountAction($name, $arguments, $context);
-
-        $action = $this->getMountedAction();
-
-        if ($action instanceof CreateAction || $action?->getName() === 'create') {
-            $this->onCreateModalFormFilled();
-        } elseif ($action instanceof EditAction || $action?->getName() === 'edit') {
-            $record = $action?->getRecord();
-            $recordId = $record?->getKey() ?? ($context['recordKey'] ?? $this->modalEditRecordId);
-            $this->onEditModalFormFilled($recordId);
-        }
-
-        return $result;
-    }
-
-    /**
-     * Auto-clear draft when a CreateAction or EditAction completes successfully.
-     */
-    protected function afterActionCalled(Action $action): void
-    {
-        parent::afterActionCalled($action);
-
-        if ($action instanceof CreateAction || $action instanceof EditAction || in_array($action->getName(), ['create', 'edit'], true)) {
-            $this->clearModalContentDraftAfterSave($action);
-        }
-    }
 
     /**
      * Call this inside ->before() or ->using() on the EditAction so the trait
@@ -195,6 +222,8 @@ trait RecoversModalContentDraft
     public function onCreateModalFormFilled(): void
     {
         $this->modalEditRecordId = null;
+        $this->modalDraftActiveKey = $this->createDraftKey();
+        $this->modalDraftRestoreDecisionMade = false;
         $this->checkAndOfferDraftRestore($this->createDraftKey(), 'restoreCreateDraft');
     }
 
@@ -205,6 +234,8 @@ trait RecoversModalContentDraft
     public function onEditModalFormFilled(int|string|null $recordId): void
     {
         $this->modalEditRecordId = $recordId;
+        $this->modalDraftActiveKey = $this->editDraftKey($recordId);
+        $this->modalDraftRestoreDecisionMade = false;
         $this->checkAndOfferDraftRestore($this->editDraftKey($recordId), 'restoreEditDraft');
     }
 
@@ -213,20 +244,52 @@ trait RecoversModalContentDraft
      */
     public function clearModalContentDraftAfterSave(?Action $action = null): void
     {
-        if ($action instanceof EditAction || $action?->getName() === 'edit') {
-            $recordId = $action->getRecord()?->getKey() ?? $this->modalEditRecordId;
-            $key = $this->editDraftKey($recordId);
-        } elseif ($action instanceof CreateAction || $action?->getName() === 'create') {
-            $key = $this->createDraftKey();
-        } elseif ($this->modalEditRecordId !== null) {
-            $key = $this->editDraftKey($this->modalEditRecordId);
-        } else {
-            $key = $this->createDraftKey();
+        $candidateKeys = [];
+
+        if ($this->modalDraftActiveKey !== null) {
+            $candidateKeys[] = $this->modalDraftActiveKey;
         }
 
-        $this->clearModalContentDraft($key);
+        if ($action instanceof EditAction || $action?->getName() === 'edit') {
+            $recordId = $action->getRecord()?->getKey() ?? $this->modalEditRecordId;
+            if ($recordId !== null && $recordId !== '') {
+                $candidateKeys[] = $this->editDraftKey($recordId);
+            }
+        } elseif ($action instanceof CreateAction || $action?->getName() === 'create') {
+            $candidateKeys[] = $this->createDraftKey();
+        }
+
+        if ($this->modalEditRecordId !== null && $this->modalEditRecordId !== '') {
+            $candidateKeys[] = $this->editDraftKey($this->modalEditRecordId);
+        }
+
+        if ($activeKey = $this->resolveActiveDraftKey()) {
+            $candidateKeys[] = $activeKey;
+        }
+
+        $candidateKeys = array_unique(array_filter($candidateKeys));
+
+        if (! empty($candidateKeys)) {
+            $this->clearModalContentDraft($candidateKeys);
+        }
+
         $this->modalEditRecordId = null;
+        $this->modalDraftActiveKey = null;
         $this->modalDraftRestorePending = false;
+        $this->modalDraftRestoreDecisionMade = false;
+        $this->modalContentDraftLastSavedAt = null;
+
+        $this->dispatchDraftEvent('content-draft-cleared');
+    }
+
+    /**
+     * Safely dispatch Livewire browser events if dispatch method is available.
+     */
+    protected function dispatchDraftEvent(string $event, ...$params): void
+    {
+        if (method_exists($this, 'dispatch')) {
+            $this->dispatch($event, ...$params);
+        }
     }
 
     /*
@@ -279,7 +342,7 @@ trait RecoversModalContentDraft
             return;
         }
 
-        $data = $mountedAction['data'] ?? [];
+        $data = $this->filterContentDraftPayload($mountedAction['data'] ?? []);
 
         // ── Guard 3: Form is still in its initial empty/null state ────────────
         // Uses the deep emptiness check (same as the standard trait) rather than
@@ -294,14 +357,16 @@ trait RecoversModalContentDraft
             return;
         }
 
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         ContentDraft::query()->updateOrCreate(
-            ['user_id' => Auth::id(), 'key' => $key],
+            ['user_id' => $userId, 'key' => $key],
             ['payload' => $data],
         );
 
         $this->modalContentDraftLastSavedAt = now()->format('h:i:s A');
 
-        $this->dispatch('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
+        $this->dispatchDraftEvent('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
     }
 
     /*
@@ -314,6 +379,7 @@ trait RecoversModalContentDraft
     public function restoreCreateDraft(): void
     {
         $this->modalDraftRestorePending = false;
+        $this->modalDraftRestoreDecisionMade = true;
         $this->restoreDraftIntoModal($this->createDraftKey());
     }
 
@@ -321,10 +387,11 @@ trait RecoversModalContentDraft
     public function restoreEditDraft(): void
     {
         $this->modalDraftRestorePending = false;
+        $this->modalDraftRestoreDecisionMade = true;
         $recordId = $this->modalEditRecordId;
         if ($recordId === null) {
             $mountedAction = $this->getActiveMountedAction();
-            $recordId = $mountedAction['context']['recordKey'] ?? null;
+            $recordId = $mountedAction['context']['recordKey'] ?? ($mountedAction['arguments']['record'] ?? null);
         }
         $this->restoreDraftIntoModal($this->editDraftKey($recordId));
     }
@@ -333,13 +400,21 @@ trait RecoversModalContentDraft
     public function discardModalContentDraft(): void
     {
         $this->modalDraftRestorePending = false;
+        $this->modalDraftRestoreDecisionMade = true;
         $this->modalContentDraftLastSavedAt = null;
 
-        $key = $this->resolveActiveDraftKey();
+        $candidateKeys = array_unique(array_filter([
+            $this->modalDraftActiveKey,
+            $this->resolveActiveDraftKey(),
+        ]));
 
-        if ($key !== null) {
-            $this->clearModalContentDraft($key);
+        if (! empty($candidateKeys)) {
+            $this->clearModalContentDraft($candidateKeys);
         }
+
+        $this->modalDraftActiveKey = null;
+
+        $this->dispatchDraftEvent('content-draft-cleared');
     }
 
     /*
@@ -351,36 +426,80 @@ trait RecoversModalContentDraft
     /**
      * Query for an existing draft. If one is found:
      *  - Set $modalDraftRestorePending = true to freeze auto-save.
-     *  - Send the persistent "Restore or Discard?" notification.
      */
     protected function checkAndOfferDraftRestore(string $key, string $restoreEvent): void
     {
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         $draft = ContentDraft::query()
-            ->where('user_id', Auth::id())
+            ->where('user_id', $userId)
             ->where('key', $key)
             ->first();
 
         if ($draft) {
             $this->modalContentDraftLastSavedAt = null;
-
-            // Freeze auto-save until the user resolves the prompt via the inline banner.
             $this->modalDraftRestorePending = true;
-
             $this->lockModalActionSchemaIfPending();
         } else {
             $this->modalContentDraftLastSavedAt = null;
         }
     }
 
-    public function renderingRecoversModalContentDraft(): void
+    public function hydrateRecoversModalContentDraft(): void
     {
         if ($this->modalDraftRestorePending) {
             $this->lockModalActionSchemaIfPending();
         }
     }
 
+    public function renderingRecoversModalContentDraft(): void
+    {
+        $currentKey = $this->resolveActiveDraftKey();
+
+        if ($currentKey !== null) {
+            // Only check DB when modal is first opened (session key transition)
+            if ($this->modalDraftActiveKey !== $currentKey) {
+                $this->modalDraftActiveKey = $currentKey;
+                $this->modalDraftRestoreDecisionMade = false;
+
+                $userId = Filament::auth()->id() ?? Auth::id();
+
+                $draft = ContentDraft::query()
+                    ->where('user_id', $userId)
+                    ->where('key', $currentKey)
+                    ->first();
+
+                $this->modalDraftRestorePending = (bool) $draft;
+            }
+        } else {
+            // Modal is closed — reset session tracking
+            $this->modalDraftActiveKey = null;
+            $this->modalDraftRestorePending = false;
+            $this->modalDraftRestoreDecisionMade = false;
+            $this->modalEditRecordId = null;
+            $this->modalContentDraftLastSavedAt = null;
+        }
+
+        if ($this->modalDraftRestorePending) {
+            $this->lockModalActionSchemaIfPending();
+        }
+    }
+
+    protected function shouldLockFormWhileDraftPending(): bool
+    {
+        try {
+            return ContentDraftPlugin::get()->shouldLockFormWhileDraftPending();
+        } catch (\Throwable $e) {
+            return (bool) config('content-draft.lock_form_while_draft_pending', false);
+        }
+    }
+
     protected function lockModalActionSchemaIfPending(): void
     {
+        if (! $this->shouldLockFormWhileDraftPending()) {
+            return;
+        }
+
         if (property_exists($this, 'table') && ! isset($this->table)) {
             return;
         }
@@ -406,8 +525,10 @@ trait RecoversModalContentDraft
 
     protected function restoreDraftIntoModal(string $key): void
     {
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         $draft = ContentDraft::query()
-            ->where('user_id', Auth::id())
+            ->where('user_id', $userId)
             ->where('key', $key)
             ->first();
 
@@ -440,14 +561,18 @@ trait RecoversModalContentDraft
             ->title('Draft restored successfully')
             ->send();
 
-        $this->dispatch('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
+        $this->dispatchDraftEvent('content-draft-saved', time: $this->modalContentDraftLastSavedAt);
     }
 
-    protected function clearModalContentDraft(string $key): void
+    protected function clearModalContentDraft(string|array $keys): void
     {
+        $keys = (array) $keys;
+
+        $userId = Filament::auth()->id() ?? Auth::id();
+
         ContentDraft::query()
-            ->where('user_id', Auth::id())
-            ->where('key', $key)
+            ->where('user_id', $userId)
+            ->whereIn('key', array_filter($keys))
             ->delete();
 
         $this->modalContentDraftLastSavedAt = null;
@@ -467,13 +592,17 @@ trait RecoversModalContentDraft
             return null;
         }
 
-        // Table record actions are create or edit; match by name heuristic.
-        if ($actionName === 'create') {
+        $mountedActionObject = method_exists($this, 'getMountedAction') ? $this->getMountedAction() : null;
+
+        // Table record actions are create or edit; match by type or name heuristic.
+        if ($mountedActionObject instanceof CreateAction || $actionName === 'create' || str_ends_with(strtolower((string) $actionName), 'create')) {
             return $this->createDraftKey();
         }
 
-        if ($actionName === 'edit') {
-            $recordId = $this->modalEditRecordId ?? ($mountedAction['context']['recordKey'] ?? null);
+        if ($mountedActionObject instanceof EditAction || $actionName === 'edit' || str_ends_with(strtolower((string) $actionName), 'edit')) {
+            $recordId = $mountedActionObject?->getRecord()?->getKey()
+                ?? $this->modalEditRecordId
+                ?? ($mountedAction['context']['recordKey'] ?? ($mountedAction['arguments']['record'] ?? null));
 
             return $this->editDraftKey($recordId);
         }
@@ -503,5 +632,48 @@ trait RecoversModalContentDraft
         }
 
         return true;
+    }
+
+    /**
+     * Filter out sensitive fields (like password) recursively from the payload.
+     */
+    protected function filterContentDraftPayload(array $data): array
+    {
+        $excludedFields = array_map('strtolower', (array) config('content-draft.except_fields', [
+            'password',
+            'password_confirmation',
+            'current_password',
+            'new_password',
+            'new_password_confirmation',
+        ]));
+
+        if (method_exists($this, 'modalContentDraftExcept')) {
+            $excludedFields = array_merge($excludedFields, array_map('strtolower', (array) $this->modalContentDraftExcept()));
+        } elseif (method_exists($this, 'contentDraftExcept')) {
+            $excludedFields = array_merge($excludedFields, array_map('strtolower', (array) $this->contentDraftExcept()));
+        }
+
+        return $this->stripExcludedFieldsRecursively($data, $excludedFields);
+    }
+
+    /**
+     * Recursively strip excluded keys from data array.
+     */
+    protected function stripExcludedFieldsRecursively(array $data, array $excludedFields): array
+    {
+        foreach ($data as $key => $value) {
+            $normalizedKey = strtolower((string) $key);
+
+            if (in_array($normalizedKey, $excludedFields, true)) {
+                unset($data[$key]);
+                continue;
+            }
+
+            if (is_array($value)) {
+                $data[$key] = $this->stripExcludedFieldsRecursively($value, $excludedFields);
+            }
+        }
+
+        return $data;
     }
 }

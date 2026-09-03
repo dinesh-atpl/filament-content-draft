@@ -10,8 +10,21 @@
     $isPending = (bool) ($livewire ? ($isModal ? $livewire->modalDraftRestorePending : ($livewire->contentDraftRestorePending ?? false)) : false);
     $modalEditRecordId = $livewire->modalEditRecordId ?? null;
 
+    $actionName = (isset($action) && method_exists($action, 'getName')) ? $action->getName() : null;
+    $isEditModal = false;
+    if ($isModal) {
+        if ($modalEditRecordId !== null) {
+            $isEditModal = true;
+        } elseif ($actionName === 'edit') {
+            $isEditModal = true;
+        } elseif ($livewire && method_exists($livewire, 'getActiveMountedAction')) {
+            $mounted = $livewire->getActiveMountedAction();
+            $isEditModal = ($mounted['name'] ?? null) === 'edit';
+        }
+    }
+
     $restoreAction = $isModal
-        ? ($modalEditRecordId !== null ? 'restoreEditDraft' : 'restoreCreateDraft')
+        ? ($isEditModal ? 'restoreEditDraft' : 'restoreCreateDraft')
         : 'restoreContentDraft';
 
     $discardAction = $isModal

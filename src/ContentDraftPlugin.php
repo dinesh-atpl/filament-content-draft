@@ -20,6 +20,8 @@ class ContentDraftPlugin implements Plugin
 
     protected ?string $position = null;
 
+    protected ?bool $lockFormWhileDraftPending = null;
+
     public static function make(): static
     {
         return app(static::class);
@@ -80,6 +82,13 @@ class ContentDraftPlugin implements Plugin
         return $this;
     }
 
+    public function lockFormWhileDraftPending(bool $condition = true): static
+    {
+        $this->lockFormWhileDraftPending = $condition;
+
+        return $this;
+    }
+
     public function getTableName(): string
     {
         return $this->tableName ?? (string) config('content-draft.table_name', 'content_drafts');
@@ -108,6 +117,11 @@ class ContentDraftPlugin implements Plugin
     public function getPosition(): string
     {
         return $this->position ?? (string) config('content-draft.position', 'under-form');
+    }
+
+    public function shouldLockFormWhileDraftPending(): bool
+    {
+        return $this->lockFormWhileDraftPending ?? (bool) config('content-draft.lock_form_while_draft_pending', false);
     }
 
     public function register(Panel $panel): void
