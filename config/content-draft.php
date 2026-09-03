@@ -1,7 +1,6 @@
 <?php
 
 use App\Models\User;
-use Filament\View\PanelsRenderHook;
 
 return [
     /*
@@ -36,15 +35,6 @@ return [
     | Used for the foreign key in the migration and the relationship.
     */
     'user_model' => User::class,
-
-    /*
-    |--------------------------------------------------------------------------
-    | Render Hook
-    |--------------------------------------------------------------------------
-    | Which Filament render hook to attach the poller to.
-    | Default: immediately after form / before footer widgets.
-    */
-    'render_hook' => PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE,
 
     /*
     |--------------------------------------------------------------------------

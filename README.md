@@ -3,7 +3,7 @@
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/konectar/filament-content-draft.svg?style=flat-square)](https://packagist.org/packages/konectar/filament-content-draft)
 [![Filament 5.x](https://img.shields.io/badge/Filament-5.x-f59e0b.svg?style=flat-square)](https://filamentphp.com)
 [![PHP Version](https://img.shields.io/badge/PHP-%5E8.2-777bb4.svg?style=flat-square)](https://php.net)
-[![License](https://img.shields.io/badge/license-proprietary-blue.svg?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 
 A robust, enterprise-grade auto-save and draft recovery plugin for **Filament 5.x**.
 
@@ -287,18 +287,6 @@ Or via `.env`:
 CONTENT_DRAFT_POLL_INTERVAL=10
 ```
 
----
-
-### 6. Custom Render Hook
-
-By default, the poller partial attaches to `PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE`. You can customize the hook location:
-
-```php
-use Filament\View\PanelsRenderHook;
-
-ContentDraftPlugin::make()
-    ->renderHook(PanelsRenderHook::PAGE_END)
-```
 
 ---
 
@@ -354,11 +342,6 @@ return [
     | Used for foreign keys and relationships.
     */
     'user_model' => App\Models\User::class,
-
-    /*
-    | Which Filament render hook to attach the poller partial to.
-    */
-    'render_hook' => Filament\View\PanelsRenderHook::PAGE_FOOTER_WIDGETS_BEFORE,
 
     /*
     | Position of the draft indicator badge:
@@ -428,4 +411,4 @@ To verify that the module works smoothly in your project:
 
 ## 📄 License
 
-This software is proprietary to Konectar / Aissel Technologies. All rights reserved.
+The MIT License (MIT). Please see [License File](LICENSE) for more information.
