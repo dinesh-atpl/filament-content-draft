@@ -2,7 +2,7 @@
     "name": "konectar/filament-content-draft",
     "description": "Filament 5.x plugin for auto-saving and recovering form content drafts.",
     "type": "library",
-    "license": "proprietary",
+    "license": "MIT",
     "authors": [
         {
             "name": "Konectar Team"
