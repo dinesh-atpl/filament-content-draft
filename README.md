@@ -392,6 +392,22 @@ return [
 
 ## 🛠️ Testing & Verification
 
+Run the automated package tests with PHP 8.2+ and the PDO SQLite extension:
+
+```bash
+composer install
+composer test
+
+# Run a specific suite or test method
+composer test -- --filter=PageDraftTest
+```
+
+The PHPUnit suite uses Laravel Testbench and an isolated in-memory SQLite database.
+It covers page and modal draft saving, restore/discard protection, recursive sensitive-field
+filtering, user isolation, cleanup after saving, model persistence, migration constraints,
+pruning boundaries, scheduler registration, and plugin configuration. Trait fixtures exercise
+Laravel persistence without a browser; use the steps below to verify the rendered Filament UI.
+
 To verify that the module works smoothly in your project:
 1. Navigate to any resource create or edit page with `RecoversContentDraft`.
 2. Type in some text and wait for the **"Draft saved at HH:MM:SS"** indicator.
