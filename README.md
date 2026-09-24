@@ -29,7 +29,17 @@ A robust, enterprise-grade auto-save and draft recovery plugin for **Filament 5.
 
 ## 📦 Installation
 
+In the code examples below, green `+` lines show what to add; unmarked lines show where they go. Remove the leading `+` when copying code into your file. Run shell commands from your Laravel project root unless a different location is shown.
+
+### Prerequisites
+
+- PHP 8.2 or later (within PHP 8.x)
+- Laravel 12 or later
+- Filament 5.x
+
 ### 1. Require the Package
+
+**Run from:** Your Laravel project root (`composer.json`).
 
 ```bash
 composer require konectar/filament-content-draft
@@ -39,12 +49,16 @@ composer require konectar/filament-content-draft
 
 Publish the package configuration file and database migration:
 
+**Run from:** Your Laravel project root (`artisan`). **Creates:** `config/content-draft.php` and a migration in `database/migrations/`.
+
 ```bash
 php artisan vendor:publish --tag="content-draft-config"
 php artisan vendor:publish --tag="content-draft-migrations"
 ```
 
 ### 3. Run Migrations
+
+**Run from:** Your Laravel project root (`artisan`).
 
 ```bash
 php artisan migrate
@@ -56,8 +70,10 @@ This creates the `content_drafts` table with unique constraints on `[user_id, ke
 
 Add `ContentDraftPlugin` to your Filament Panel provider (e.g. `app/Providers/Filament/AdminPanelProvider.php`):
 
-```php
-use Konectar\FilamentContentDraft\ContentDraftPlugin;
+**File:** `app/Providers/Filament/AdminPanelProvider.php` (or your panel provider).
+
+```diff
++use Konectar\FilamentContentDraft\ContentDraftPlugin;
 
 public function panel(Panel $panel): Panel
 {
@@ -65,9 +81,9 @@ public function panel(Panel $panel): Panel
         ->default()
         ->id('admin')
         // ... other panel configurations
-        ->plugins([
-            ContentDraftPlugin::make(),
-        ]);
++        ->plugins([
++            ContentDraftPlugin::make(),
++        ]);
 }
 ```
 
@@ -84,34 +100,38 @@ The package provides two traits depending on whether your form lives on a **dedi
 Use the `RecoversContentDraft` trait in your dedicated `CreateRecord` or `EditRecord` page classes.
 
 #### Create Record Page:
-```php
+**File:** `app/Filament/Resources/Posts/Pages/CreatePost.php` (use your resource page's path).
+
+```diff
 namespace App\Filament\Resources\Posts\Pages;
 
 use App\Filament\Resources\Posts\PostResource;
 use Filament\Resources\Pages\CreateRecord;
-use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
++use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
 
 class CreatePost extends CreateRecord
 {
     protected static string $resource = PostResource::class;
 
-    use RecoversContentDraft;
++    use RecoversContentDraft;
 }
 ```
 
 #### Edit Record Page:
-```php
+**File:** `app/Filament/Resources/Posts/Pages/EditPost.php` (use your resource page's path).
+
+```diff
 namespace App\Filament\Resources\Posts\Pages;
 
 use App\Filament\Resources\Posts\PostResource;
 use Filament\Resources\Pages\EditRecord;
-use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
++use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
 
 class EditPost extends EditRecord
 {
     protected static string $resource = PostResource::class;
 
-    use RecoversContentDraft;
++    use RecoversContentDraft;
 }
 ```
 
@@ -126,7 +146,9 @@ class EditPost extends EditRecord
 
 If your resource or page manages records via modal dialogs (`CreateAction` or `EditAction` in tables or page headers), use the `RecoversModalContentDraft` trait on the parent Page or List class.
 
-```php
+**File:** `app/Filament/Resources/Categories/Pages/ListCategories.php` (use the page that owns your modal actions).
+
+```diff
 namespace App\Filament\Resources\Categories\Pages;
 
 use App\Filament\Resources\Categories\CategoryResource;
@@ -134,13 +156,13 @@ use Filament\Actions\CreateAction;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Tables\Table;
-use Konectar\FilamentContentDraft\Concerns\RecoversModalContentDraft;
++use Konectar\FilamentContentDraft\Concerns\RecoversModalContentDraft;
 
 class ListCategories extends ListRecords
 {
     protected static string $resource = CategoryResource::class;
 
-    use RecoversModalContentDraft;
++    use RecoversModalContentDraft;
 
     public function table(Table $table): Table
     {
@@ -176,24 +198,28 @@ By default, draft keys are resolved automatically:
 You can override how keys are generated if you have tenant-scoped data, multiple forms, or custom routing:
 
 #### In Standard Pages (`RecoversContentDraft`):
-```php
-protected function contentDraftKey(): string
-{
-    return 'tenant-' . auth()->user()->tenant_id . '-post-edit-' . $this->getRecord()->getKey();
-}
+**File:** Your `CreateRecord` or `EditRecord` page, for example `app/Filament/Resources/Posts/Pages/EditPost.php`.
+
+```diff
++protected function contentDraftKey(): string
++{
++    return 'tenant-' . auth()->user()->tenant_id . '-post-edit-' . $this->getRecord()->getKey();
++}
 ```
 
 #### In Modal Actions (`RecoversModalContentDraft`):
-```php
-protected function createDraftKey(): string
-{
-    return request('client_id', 1) . '_case_type-create';
-}
+**File:** The page that owns the modal actions, for example `app/Filament/Resources/Categories/Pages/ListCategories.php`.
 
-protected function editDraftKey(int|string|null $recordId): string
-{
-    return request('client_id', 1) . '_case_type-edit-' . $recordId;
-}
+```diff
++protected function createDraftKey(): string
++{
++    return request('client_id', 1) . '_case_type-create';
++}
+
++protected function editDraftKey(int|string|null $recordId): string
++{
++    return request('client_id', 1) . '_case_type-edit-' . $recordId;
++}
 ```
 
 ---
@@ -203,29 +229,35 @@ protected function editDraftKey(int|string|null $recordId): string
 By default, common password fields are ignored. You can specify additional fields that should never be saved to drafts (e.g., credit card details, API secrets, SSNs):
 
 #### Globally via `config/content-draft.php`:
-```php
+**File:** `config/content-draft.php` in your Laravel project, after publishing the config. Add your field names to the existing `except_fields` array.
+
+```diff
 'except_fields' => [
     'password',
     'password_confirmation',
-    'credit_card_number',
-    'cvv',
-    'api_token',
++    'credit_card_number',
++    'cvv',
++    'api_token',
 ],
 ```
 
 #### Per-Page:
-```php
-// In standard pages:
-public function contentDraftExcept(): array
-{
-    return ['temp_token', 'two_factor_code'];
-}
+**File for standard pages:** Your `CreateRecord` or `EditRecord` page, for example `app/Filament/Resources/Posts/Pages/EditPost.php`.
 
-// In modal pages:
-public function modalContentDraftExcept(): array
-{
-    return ['secret_key'];
-}
+```diff
++public function contentDraftExcept(): array
++{
++    return ['temp_token', 'two_factor_code'];
++}
+```
+
+**File for modal actions:** The page that owns the actions, for example `app/Filament/Resources/Categories/Pages/ListCategories.php`.
+
+```diff
++public function modalContentDraftExcept(): array
++{
++    return ['secret_key'];
++}
 ```
 
 ---
@@ -235,14 +267,18 @@ public function modalContentDraftExcept(): array
 To prevent users from modifying or dirtying the form before making a decision to **Restore** or **Discard** an existing draft, you can enable form locking:
 
 #### Via Plugin Builder:
-```php
-ContentDraftPlugin::make()
-    ->lockFormWhileDraftPending(true)
+**File:** `app/Providers/Filament/AdminPanelProvider.php` (or the panel provider where you registered the plugin). Add the method to your existing `ContentDraftPlugin::make()` call.
+
+```diff
+ ContentDraftPlugin::make()
++    ->lockFormWhileDraftPending(true)
 ```
 
 #### Or via `.env`:
-```env
-CONTENT_DRAFT_LOCK_FORM=true
+**File:** `.env` in your Laravel project root.
+
+```diff
++CONTENT_DRAFT_LOCK_FORM=true
 ```
 
 When enabled, the entire form schema is automatically set to `disabled` until the user chooses either **Restore** or **Discard**.
@@ -263,13 +299,18 @@ You can place the "Draft saved at..." badge right beneath the form or as a float
 | `'top-left'` | Floating pill at the top-left corner (auto-fades after 4s). |
 
 #### Configuration:
-```php
-ContentDraftPlugin::make()
-    ->position('bottom-right')
+**File:** `app/Providers/Filament/AdminPanelProvider.php` (or your panel provider).
+
+```diff
+ ContentDraftPlugin::make()
++    ->position('bottom-right')
 ```
 Or via `.env`:
-```env
-CONTENT_DRAFT_POSITION=bottom-right
+
+**File:** `.env` in your Laravel project root.
+
+```diff
++CONTENT_DRAFT_POSITION=bottom-right
 ```
 
 ---
@@ -278,13 +319,18 @@ CONTENT_DRAFT_POSITION=bottom-right
 
 Change how frequently drafts are saved (in seconds):
 
-```php
-ContentDraftPlugin::make()
-    ->pollInterval(10) // Poll every 10 seconds
+**File:** `app/Providers/Filament/AdminPanelProvider.php` (or your panel provider).
+
+```diff
+ ContentDraftPlugin::make()
++    ->pollInterval(10) // Poll every 10 seconds
 ```
 Or via `.env`:
-```env
-CONTENT_DRAFT_POLL_INTERVAL=10
+
+**File:** `.env` in your Laravel project root.
+
+```diff
++CONTENT_DRAFT_POLL_INTERVAL=10
 ```
 
 
@@ -293,6 +339,8 @@ CONTENT_DRAFT_POLL_INTERVAL=10
 ## 🧹 Draft Pruning & Maintenance
 
 Content drafts that are abandoned by users can accumulate over time. The plugin provides a built-in prune command:
+
+**Run from:** Your Laravel project root (`artisan`).
 
 ```bash
 # Prune drafts older than default (7 days)
@@ -305,6 +353,8 @@ php artisan drafts:prune --days=3
 ### Automated Daily Pruning
 The package's `ContentDraftServiceProvider` automatically registers the command in your Laravel scheduler to run **daily**:
 
+**Package file:** `src/ContentDraftServiceProvider.php`. This registration is included with the package; no application code needs to be added.
+
 ```php
 $schedule->command('drafts:prune')->daily();
 ```
@@ -316,6 +366,8 @@ Make sure your server has the Laravel scheduler running in cron (`* * * * * php 
 ## 📋 Configuration Reference
 
 Here is the complete reference for `config/content-draft.php`:
+
+**File:** `config/content-draft.php` in your Laravel project, after publishing the config. This is a reference for the generated file, so edit only the values you need.
 
 ```php
 return [
@@ -393,6 +445,8 @@ return [
 ## 🛠️ Testing & Verification
 
 Run the automated package tests with PHP 8.2+ and the PDO SQLite extension:
+
+**Run from:** This package's root (`composer.json`).
 
 ```bash
 composer install
