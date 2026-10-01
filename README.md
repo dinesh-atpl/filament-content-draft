@@ -231,33 +231,33 @@ By default, common password fields are ignored. You can specify additional field
 #### Globally via `config/content-draft.php`:
 **File:** `config/content-draft.php` in your Laravel project, after publishing the config. Add your field names to the existing `except_fields` array.
 
-```diff
+```php
 'except_fields' => [
     'password',
     'password_confirmation',
-+    'credit_card_number',
-+    'cvv',
-+    'api_token',
+    'credit_card_number',
+    'cvv',
+    'api_token',
 ],
 ```
 
 #### Per-Page:
 **File for standard pages:** Your `CreateRecord` or `EditRecord` page, for example `app/Filament/Resources/Posts/Pages/EditPost.php`.
 
-```diff
-+public function contentDraftExcept(): array
-+{
-+    return ['temp_token', 'two_factor_code'];
-+}
+```php
+public function contentDraftExcept(): array
+{
+    return ['temp_token', 'two_factor_code'];
+}
 ```
 
 **File for modal actions:** The page that owns the actions, for example `app/Filament/Resources/Categories/Pages/ListCategories.php`.
 
-```diff
-+public function modalContentDraftExcept(): array
-+{
-+    return ['secret_key'];
-+}
+```php
+public function modalContentDraftExcept(): array
+{
+    return ['secret_key'];
+}
 ```
 
 ---
@@ -277,8 +277,8 @@ To prevent users from modifying or dirtying the form before making a decision to
 #### Or via `.env`:
 **File:** `.env` in your Laravel project root.
 
-```diff
-+CONTENT_DRAFT_LOCK_FORM=true
+```php
+CONTENT_DRAFT_LOCK_FORM=true
 ```
 
 When enabled, the entire form schema is automatically set to `disabled` until the user chooses either **Restore** or **Discard**.
@@ -309,8 +309,8 @@ Or via `.env`:
 
 **File:** `.env` in your Laravel project root.
 
-```diff
-+CONTENT_DRAFT_POSITION=bottom-right
+```php
+CONTENT_DRAFT_POSITION=bottom-right
 ```
 
 ---
@@ -329,8 +329,8 @@ Or via `.env`:
 
 **File:** `.env` in your Laravel project root.
 
-```diff
-+CONTENT_DRAFT_POLL_INTERVAL=10
+```php
+CONTENT_DRAFT_POLL_INTERVAL=10
 ```
 
 
