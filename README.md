@@ -200,26 +200,26 @@ You can override how keys are generated if you have tenant-scoped data, multiple
 #### In Standard Pages (`RecoversContentDraft`):
 **File:** Your `CreateRecord` or `EditRecord` page, for example `app/Filament/Resources/Posts/Pages/EditPost.php`.
 
-```diff
-+protected function contentDraftKey(): string
-+{
-+    return 'tenant-' . auth()->user()->tenant_id . '-post-edit-' . $this->getRecord()->getKey();
-+}
+```php
+protected function contentDraftKey(): string
+{
+    return 'tenant-' . auth()->user()->tenant_id . '-post-edit-' . $this->getRecord()->getKey();
+}
 ```
 
 #### In Modal Actions (`RecoversModalContentDraft`):
 **File:** The page that owns the modal actions, for example `app/Filament/Resources/Categories/Pages/ListCategories.php`.
 
-```diff
-+protected function createDraftKey(): string
-+{
-+    return request('client_id', 1) . '_case_type-create';
-+}
+```php
+protected function createDraftKey(): string
+{
+    return request('client_id', 1) . '_case_type-create';
+}
 
-+protected function editDraftKey(int|string|null $recordId): string
-+{
-+    return request('client_id', 1) . '_case_type-edit-' . $recordId;
-+}
+protected function editDraftKey(int|string|null $recordId): string
+{
+    return request('client_id', 1) . '_case_type-edit-' . $recordId;
+}
 ```
 
 ---
