@@ -72,8 +72,8 @@ Add `ContentDraftPlugin` to your Filament Panel provider (e.g. `app/Providers/Fi
 
 **File:** `app/Providers/Filament/AdminPanelProvider.php` (or your panel provider).
 
-```diff
-+use Konectar\FilamentContentDraft\ContentDraftPlugin;
+
+<pre><code><strong>use Konectar\FilamentContentDraft\ContentDraftPlugin;</strong>
 
 public function panel(Panel $panel): Panel
 {
@@ -81,11 +81,12 @@ public function panel(Panel $panel): Panel
         ->default()
         ->id('admin')
         // ... other panel configurations
-+        ->plugins([
-+            ContentDraftPlugin::make(),
-+        ]);
+<strong>        ->plugins([
+            ContentDraftPlugin::make(),
+        ]);</strong>
 }
-```
+</code></pre>
+
 
 ---
 
