@@ -103,38 +103,38 @@ Use the `RecoversContentDraft` trait in your dedicated `CreateRecord` or `EditRe
 #### Create Record Page:
 **File:** `app/Filament/Resources/Posts/Pages/CreatePost.php` (use your resource page's path).
 
-```diff
-namespace App\Filament\Resources\Posts\Pages;
+<pre><code>namespace App\Filament\Resources\Posts\Pages;
 
 use App\Filament\Resources\Posts\PostResource;
 use Filament\Resources\Pages\CreateRecord;
-+use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
+<strong>use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;</strong>
 
 class CreatePost extends CreateRecord
 {
     protected static string $resource = PostResource::class;
 
-+    use RecoversContentDraft;
+<strong>    use RecoversContentDraft;</strong>
 }
-```
+</code></pre>
 
 #### Edit Record Page:
 **File:** `app/Filament/Resources/Posts/Pages/EditPost.php` (use your resource page's path).
 
-```diff
-namespace App\Filament\Resources\Posts\Pages;
+
+<pre><code>namespace App\Filament\Resources\Posts\Pages;
 
 use App\Filament\Resources\Posts\PostResource;
 use Filament\Resources\Pages\EditRecord;
-+use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;
+<strong>use Konectar\FilamentContentDraft\Concerns\RecoversContentDraft;</strong>
 
 class EditPost extends EditRecord
 {
     protected static string $resource = PostResource::class;
 
-+    use RecoversContentDraft;
+    <strong>use RecoversContentDraft;</strong>
 }
-```
+</code></pre>
+
 
 **That's it!**
 - While editing, any changes will be automatically saved every 5 seconds (configurable).
@@ -149,7 +149,7 @@ If your resource or page manages records via modal dialogs (`CreateAction` or `E
 
 **File:** `app/Filament/Resources/Categories/Pages/ListCategories.php` (use the page that owns your modal actions).
 
-```diff
+<pre><code>
 namespace App\Filament\Resources\Categories\Pages;
 
 use App\Filament\Resources\Categories\CategoryResource;
@@ -157,13 +157,13 @@ use Filament\Actions\CreateAction;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Tables\Table;
-+use Konectar\FilamentContentDraft\Concerns\RecoversModalContentDraft;
+<strong>use Konectar\FilamentContentDraft\Concerns\RecoversModalContentDraft;</strong>
 
 class ListCategories extends ListRecords
 {
     protected static string $resource = CategoryResource::class;
 
-+    use RecoversModalContentDraft;
+    <strong>use RecoversModalContentDraft;</strong>
 
     public function table(Table $table): Table
     {
@@ -178,7 +178,7 @@ class ListCategories extends ListRecords
             ]);
     }
 }
-```
+</code></pre>
 
 The modal trait automatically:
 - Injects the draft notification banner right above the modal form schema.
